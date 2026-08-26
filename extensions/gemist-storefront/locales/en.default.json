@@ -1,0 +1,11 @@
+{
+  "gemist": {
+    "card": {
+      "default_badge": "Gemist"
+    },
+    "empty": {
+      "headline": "Gemist data will appear here",
+      "summary": "Add storefront fields on the product, or type a headline in this block’s settings."
+    }
+  }
+}

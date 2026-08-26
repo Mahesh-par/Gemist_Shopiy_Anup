@@ -1,0 +1,95 @@
+{%- if block.settings.enable_widget -%}
+  {%- liquid
+    assign current_product = product
+  -%}
+  <div class="gemist-embed gemist-embed--{{ block.settings.position }}">
+    {% render 'gemist-card', product: current_product, block: block %}
+  </div>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Floating widget",
+  "target": "body",
+  "stylesheet": "gemist-storefront.css",
+  "javascript": "gemist-storefront.js",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enable_widget",
+      "label": "Show floating data widget",
+      "default": true
+    },
+    {
+      "type": "select",
+      "id": "position",
+      "label": "Position",
+      "options": [
+        { "value": "bottom-right", "label": "Bottom right" },
+        { "value": "bottom-left", "label": "Bottom left" }
+      ],
+      "default": "bottom-right"
+    },
+    {
+      "type": "text",
+      "id": "headline",
+      "label": "Headline override"
+    },
+    {
+      "type": "textarea",
+      "id": "summary",
+      "label": "Summary override"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_badge",
+      "label": "Show badge",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_empty_state",
+      "label": "Show placeholder when data is missing",
+      "default": false
+    },
+    {
+      "type": "select",
+      "id": "layout",
+      "label": "Stats layout",
+      "options": [
+        { "value": "stacked", "label": "Stacked" },
+        { "value": "grid", "label": "Grid" }
+      ],
+      "default": "stacked"
+    },
+    {
+      "type": "range",
+      "id": "corner_radius",
+      "min": 0,
+      "max": 32,
+      "step": 2,
+      "unit": "px",
+      "label": "Corner radius",
+      "default": 16
+    },
+    {
+      "type": "color",
+      "id": "background",
+      "label": "Background",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "Text",
+      "default": "#1a1a1a"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Accent",
+      "default": "#1f6feb"
+    }
+  ]
+}
+{% endschema %}
