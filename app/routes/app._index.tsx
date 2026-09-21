@@ -4,246 +4,199 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useFetcher } from "react-router";
+import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { ShopBanner } from "../components/shop-banner";
+import { getMerchantCredentials } from "../models/merchant-credential.server";
+import { getMerchantSettings } from "../models/merchant-settings.server";
+import {
+  listRecentGemistOrders,
+  retryGemistOrder,
+} from "../models/gemist-order.server";
+import { pingGemistApi, resolveGemistApiBaseUrl } from "../lib/gemist-api.server";
+import { getShopProfile } from "../lib/shop-profile.server";
+
+type ActionData =
+  | { ok: true; status: string; gemistOrderId?: string }
+  | { ok: false; error: string };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-
-  return null;
-};
-
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
-
-  const product = responseJson.data!.productCreate!.product!;
-  const variantId = product.variants.edges[0]!.node!.id!;
-
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-
-  const variantResponseJson = await variantResponse.json();
+  const { admin, session } = await authenticate.admin(request);
+  const profile = await getShopProfile(admin, session.shop);
+  const credentials = await getMerchantCredentials(session.shop);
+  const settings = await getMerchantSettings(session.shop);
+  const orders = await listRecentGemistOrders(session.shop);
+  const apiBaseUrl = resolveGemistApiBaseUrl(settings.apiBaseUrl);
+  let catalogOk = false;
+  let styleCount = 0;
+  try {
+    const ping = await pingGemistApi(apiBaseUrl);
+    catalogOk = ping.ok;
+    styleCount = ping.styleCount;
+  } catch {
+    catalogOk = false;
+  }
 
   return {
-    product: responseJson!.data!.productCreate!.product,
-    variant:
-      variantResponseJson!.data!.productVariantsBulkUpdate!.productVariants,
+    profile,
+    apiBaseUrl,
+    catalogOk,
+    styleCount,
+    hasCredentials: Boolean(credentials),
+    markupPercent: settings.markupPercent,
+    hasAppointment: Boolean(
+      settings.appointmentUrl || settings.appointmentEmail,
+    ),
+    orders: orders.map((order) => ({
+      id: order.id,
+      name: order.shopifyOrderName || order.shopifyOrderId,
+      sku: order.oemSku,
+      gemistOrderId: order.gemistOrderId,
+      status: order.status,
+      error: order.error,
+      attempts: order.attempts,
+    })),
   };
 };
 
-export default function Index() {
-  const fetcher = useFetcher<typeof action>();
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const orderId = String(formData.get("orderId") || "").trim();
+  if (!orderId) {
+    return { ok: false, error: "Missing order id." } satisfies ActionData;
+  }
 
+  try {
+    const row = await retryGemistOrder(session.shop, orderId);
+    if (row.status === "submitted") {
+      return {
+        ok: true,
+        status: row.status,
+        gemistOrderId: row.gemistOrderId,
+      } satisfies ActionData;
+    }
+    return {
+      ok: false,
+      error: row.error || `Order is still ${row.status}.`,
+    } satisfies ActionData;
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error ? error.message : "Could not retry this order.",
+    } satisfies ActionData;
+  }
+};
+
+export default function Index() {
+  const data = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
+  const retryingId = String(fetcher.formData?.get("orderId") || "");
 
   useEffect(() => {
-    if (fetcher.data?.product?.id) {
-      shopify.toast.show("Product created");
+    if (!fetcher.data) return;
+    if (fetcher.data.ok) {
+      shopify.toast.show("Order submitted to Gemist.");
+      return;
     }
-  }, [fetcher.data?.product?.id, shopify]);
-
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
+    shopify.toast.show(fetcher.data.error);
+  }, [fetcher.data, shopify]);
 
   return (
-    <s-page heading="Shopify app template">
-      <s-button slot="primary-action" onClick={generateProduct}>
-        Generate a product
-      </s-button>
+    <s-page heading="Home">
+      <ShopBanner shopName={data.profile.name} shopDomain={data.profile.domain} />
 
-      <s-section heading="Congrats on creating a new Shopify app 🎉">
-        <s-paragraph>
-          This embedded app template uses{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/tools/app-bridge"
-            target="_blank"
-          >
-            App Bridge
-          </s-link>{" "}
-          interface examples like an{" "}
-            <s-link href="/app/theme">theme setup page in the app nav</s-link>
-          , as well as an{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            Admin GraphQL
-          </s-link>{" "}
-          mutation demo, to provide a starting point for app development.
-        </s-paragraph>
-      </s-section>
-      <s-section heading="Get started with products">
-        <s-paragraph>
-          Generate a product with GraphQL and get the JSON output for that
-          product. Learn more about the{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-            target="_blank"
-          >
-            productCreate
-          </s-link>{" "}
-          mutation in our API references.
-        </s-paragraph>
-        <s-stack direction="inline" gap="base">
-          <s-button
-            onClick={generateProduct}
-            {...(isLoading ? { loading: true } : {})}
-          >
-            Generate a product
-          </s-button>
-          {fetcher.data?.product && (
-            <s-button
-              onClick={() => {
-                shopify.intents.invoke?.("edit:shopify/Product", {
-                  value: fetcher.data?.product?.id,
-                });
-              }}
-              target="_blank"
-              variant="tertiary"
-            >
-              Edit product
-            </s-button>
-          )}
-        </s-stack>
-        {fetcher.data?.product && (
-          <s-section heading="productCreate mutation">
-            <s-stack direction="block" gap="base">
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.product, null, 2)}</code>
-                </pre>
-              </s-box>
-
-              <s-heading>productVariantsBulkUpdate mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.variant, null, 2)}</code>
-                </pre>
-              </s-box>
-            </s-stack>
-          </s-section>
-        )}
-      </s-section>
-
-      <s-section slot="aside" heading="App template specs">
-        <s-paragraph>
-          <s-text>Framework: </s-text>
-          <s-link href="https://reactrouter.com/" target="_blank">
-            React Router
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Interface: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/app-home/using-polaris-components"
-            target="_blank"
-          >
-            Polaris web components
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>API: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            GraphQL
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Database: </s-text>
-          <s-link href="https://www.prisma.io/" target="_blank">
-            Prisma
-          </s-link>
-        </s-paragraph>
-      </s-section>
-
-      <s-section slot="aside" heading="Next steps">
+      <s-section heading="Connection">
         <s-unordered-list>
           <s-list-item>
-            Build an{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/getting-started/build-app-example"
-              target="_blank"
-            >
-              example app
-            </s-link>
+            Catalog:{" "}
+            {data.catalogOk
+              ? `connected · ${data.styleCount} styles`
+              : "not reachable"}
+          </s-list-item>
+          <s-list-item>API: {data.apiBaseUrl}</s-list-item>
+          <s-list-item>Markup: {data.markupPercent}%</s-list-item>
+          <s-list-item>
+            Appointments: {data.hasAppointment ? "configured" : "not set"}
           </s-list-item>
           <s-list-item>
-            Explore Shopify&apos;s API with{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-              target="_blank"
-            >
-              GraphiQL
-            </s-link>
+            Order token: {data.hasCredentials ? "saved" : "not saved"}
           </s-list-item>
         </s-unordered-list>
+        <s-stack direction="inline" gap="base">
+          <s-button href="/app/settings" variant="primary">
+            Settings
+          </s-button>
+          <s-button href="/app/theme">Theme</s-button>
+          <s-button href="/app/widgets">Widgets</s-button>
+          <s-button href={data.profile.storefrontUrl} target="_blank" variant="tertiary">
+            Storefront
+          </s-button>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Get started">
+        <s-unordered-list>
+          <s-list-item>
+            Save catalog URL, markup, and appointment settings
+          </s-list-item>
+          <s-list-item>
+            Add the product grid to a collection or home page
+          </s-list-item>
+          <s-list-item>Customize widget styles for this store</s-list-item>
+        </s-unordered-list>
+      </s-section>
+
+      <s-section heading="Recent orders">
+        {data.orders.length ? (
+          <s-stack direction="block" gap="base">
+            {data.orders.map((order) => (
+              <s-box
+                key={order.id}
+                padding="base"
+                borderWidth="base"
+                borderRadius="base"
+                background="subdued"
+              >
+                <s-stack direction="block" gap="base">
+                  <s-paragraph>
+                    {order.name}
+                    {order.sku ? ` · ${order.sku}` : ""}
+                    {` · ${order.status}`}
+                    {order.attempts ? ` · ${order.attempts} attempt(s)` : ""}
+                  </s-paragraph>
+                  {order.gemistOrderId ? (
+                    <s-paragraph>Gemist id {order.gemistOrderId}</s-paragraph>
+                  ) : null}
+                  {order.error ? <s-paragraph>{order.error}</s-paragraph> : null}
+                  {order.status !== "submitted" ? (
+                    <fetcher.Form method="post">
+                      <input type="hidden" name="orderId" value={order.id} />
+                      <s-button
+                        type="submit"
+                        variant="secondary"
+                        {...(fetcher.state !== "idle" && retryingId === order.id
+                          ? { loading: true }
+                          : {})}
+                      >
+                        Retry Gemist submit
+                      </s-button>
+                    </fetcher.Form>
+                  ) : null}
+                </s-stack>
+              </s-box>
+            ))}
+          </s-stack>
+        ) : (
+          <s-paragraph>
+            No Gemist orders yet. Complete a checkout with a Gemist cart line to
+            see it here.
+          </s-paragraph>
+        )}
       </s-section>
     </s-page>
   );
