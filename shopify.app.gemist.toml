@@ -2,7 +2,7 @@
 
 client_id = "14a5995ae8634749338e21b9bd9f20a9"
 name = "Gemist"
-application_url = "https://example.com"
+application_url = "https://gemistapp.zooq.app"
 embedded = true
 
 [webhooks]
@@ -13,7 +13,7 @@ api_version = "2026-10"
 scopes = ""
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://gemistapp.zooq.app/api/auth" ]
 
 [build]
 include_config_on_deploy = true

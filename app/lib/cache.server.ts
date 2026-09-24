@@ -84,6 +84,20 @@ export async function cacheSet(
   });
 }
 
+export async function cacheDelete(key: string): Promise<void> {
+  memory.delete(key);
+  try {
+    const { unlink } = await import("node:fs/promises");
+    await unlink(filePath(key));
+  } catch {
+    /* file may not exist */
+  }
+  await redisCommand(async (redis) => {
+    await redis.del(key);
+    return true;
+  });
+}
+
 export async function withCache<T>(
   key: string,
   ttlSeconds: number,

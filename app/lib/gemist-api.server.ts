@@ -1,4 +1,4 @@
-import { cacheGet, cacheSet, withCache, CACHE_TTL_SECONDS } from "./cache.server";
+import { cacheGet, cacheSet, cacheDelete, withCache, CACHE_TTL_SECONDS } from "./cache.server";
 
 export type GemistProduct = {
   id?: string;
@@ -110,10 +110,31 @@ export async function getGemistProduct({
 }: {
   apiBaseUrl: string;
   productId: string;
-}): Promise<GemistProduct> {
-  return fetchJson<GemistProduct>(
-    joinUrl(apiBaseUrl, `/api/products/${encodeURIComponent(productId)}`),
-  );
+}): Promise<GemistProduct | null> {
+  const url = joinUrl(apiBaseUrl, `/api/products/${encodeURIComponent(productId)}`);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (response.status === 404) return null;
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(
+          `Gemist request failed (${response.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+        );
+      }
+      const product = (await response.json()) as GemistProduct;
+      return product?.id ? product : null;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableGemistError(error) || attempt === 1) throw error;
+      await delay(400 * (attempt + 1));
+    }
+  }
+  throw lastError;
 }
 
 /** GET /api/products/{id}/parts — OpenAPI ProductPart[] */
@@ -374,6 +395,11 @@ export async function getGemistCatalogSlugs(apiBaseUrl: string): Promise<string[
   );
 }
 
+/** Drop cached style list for a catalog host so the next load hits Gemist again. */
+export async function invalidateGemistCatalogSlugs(apiBaseUrl: string) {
+  await cacheDelete(`gemist:v1:slugs:${cacheScope(apiBaseUrl)}`);
+}
+
 function styleCacheKey(apiBaseUrl: string, slug: string) {
   return `gemist:v1:style:${cacheScope(apiBaseUrl)}:${slug}`;
 }
@@ -390,12 +416,19 @@ export async function getGemistCatalogPage({
   apiBaseUrl,
   limit = 8,
   offset = 0,
+  allowedSlugs,
 }: {
   apiBaseUrl: string;
   limit?: number;
   offset?: number;
+  /** When set, only these style slugs are returned (storefront visibility). */
+  allowedSlugs?: string[] | null;
 }): Promise<{ slugs: string[]; products: GemistProduct[]; productsCount: number }> {
-  const slugs = await getGemistCatalogSlugs(apiBaseUrl);
+  const allSlugs = await getGemistCatalogSlugs(apiBaseUrl);
+  const slugs =
+    allowedSlugs == null
+      ? allSlugs
+      : allSlugs.filter((slug) => allowedSlugs.includes(slug));
   const start = Math.max(offset, 0);
   const selected = slugs.slice(start, start + Math.max(limit, 1));
   const loaded = await Promise.all(

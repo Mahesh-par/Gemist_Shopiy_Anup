@@ -82,6 +82,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       apiBaseUrl,
       productId: gemistProductId,
     });
+    if (!product) {
+      return json({ error: "Gemist product not found." });
+    }
     let prices: Record<string, number> | null = null;
     try {
       prices = await getGemistProductPrices({

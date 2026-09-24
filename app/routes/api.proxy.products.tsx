@@ -2,12 +2,18 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
   resolveGemistApiBaseUrl,
   getGemistCatalogPage,
+  getGemistCatalogSlugs,
   getGemistStyleProduct,
   getGemistProduct,
   searchGemistProducts,
 } from "../lib/gemist-api.server";
 import { authenticateAppProxy } from "../lib/app-proxy.server";
 import { getMerchantSettings } from "../models/merchant-settings.server";
+import {
+  filterActiveCatalogSlugs,
+  getCatalogStatusMap,
+  getCatalogStyleStatus,
+} from "../models/merchant-catalog.server";
 
 function json(data: unknown) {
   return new Response(JSON.stringify(data), {
@@ -55,15 +61,57 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     if (productId) {
       const product = await getGemistProduct({ apiBaseUrl, productId });
+      if (!product) {
+        return json({
+          product: null,
+          error: `Gemist product not found for id ${productId}.`,
+        });
+      }
+      const productSlug = String(product.slug || "").trim();
+      if (shop && productSlug) {
+        const status = await getCatalogStyleStatus(shop, productSlug);
+        if (status !== "active") {
+          return json({
+            product: null,
+            error: "This product is not available on the storefront.",
+          });
+        }
+      }
       return json({ product });
     }
 
     if (slug) {
+      if (shop) {
+        const status = await getCatalogStyleStatus(shop, slug);
+        if (status !== "active") {
+          return json({
+            product: null,
+            error: "This product is not available on the storefront.",
+          });
+        }
+      }
       const product = await getGemistStyleProduct(apiBaseUrl, slug);
+      if (!product) {
+        return json({
+          product: null,
+          error: `Gemist style not found for slug ${slug}.`,
+        });
+      }
       return json({ product });
     }
 
-    const result = await getGemistCatalogPage({ apiBaseUrl, limit, offset });
+    const allSlugs = await getGemistCatalogSlugs(apiBaseUrl);
+    const statusMap = shop ? await getCatalogStatusMap(shop) : {};
+    const allowedSlugs = shop
+      ? filterActiveCatalogSlugs(allSlugs, statusMap)
+      : allSlugs;
+
+    const result = await getGemistCatalogPage({
+      apiBaseUrl,
+      limit,
+      offset,
+      allowedSlugs,
+    });
     return json(result);
   } catch (error) {
     const message =

@@ -9,9 +9,12 @@ const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 
 function getEncryptionKey() {
-  const secret = process.env.SHOPIFY_API_SECRET;
+  const dedicated = (process.env.CREDENTIALS_ENCRYPTION_KEY || "").trim();
+  const secret = dedicated || process.env.SHOPIFY_API_SECRET || "";
   if (!secret) {
-    throw new Error("SHOPIFY_API_SECRET is required to encrypt merchant credentials.");
+    throw new Error(
+      "CREDENTIALS_ENCRYPTION_KEY or SHOPIFY_API_SECRET is required to encrypt merchant credentials.",
+    );
   }
 
   return scryptSync(secret, "gemist-merchant-credentials", 32);

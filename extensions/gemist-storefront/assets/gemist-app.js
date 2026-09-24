@@ -2,9 +2,10 @@
   const DEFAULT_API_BASE = "https://classique.dev.gemist.co";
   const PRODUCTS_PROXY = "/apps/gemist/products";
   const PRODUCT_PARAM = "gemist_product";
+  const SLUG_PARAM = "gemist_slug";
   const PAGE_PARAM = "gemist_page";
   const CUSTOMIZE_PARAM = "gemist_customize";
-  const STORAGE_KEY = "gemist-product-cache-v4";
+  const STORAGE_KEY = "gemist-product-cache-v5";
   const CATALOG_TTL_MS = 48 * 60 * 60 * 1000;
   const PAGE_CONCURRENCY = 1;
   const OPTION_ORDER = [
@@ -84,7 +85,7 @@
     }
 
     const pageSize = Math.max(Number(root.dataset.limit) || 8, 1);
-    const showPrice = root.dataset.showPrice === "true";
+    const cardOptions = cardOptionsOf(root);
     const page = Math.max(Number(queryParam(PAGE_PARAM) || 1), 1);
 
     catalog.querySelector("[data-gemist-retry]")?.remove();
@@ -101,7 +102,7 @@
         const cached = memory.bySlug[slug];
         grid.appendChild(
           cached
-            ? renderCard(cached, showPrice, safePage)
+            ? renderCard(cached, cardOptions, safePage)
             : renderSkeleton(slug),
         );
       });
@@ -151,7 +152,7 @@
       if (!pageSet.has(slug) || !product) return;
       const item = grid.querySelector(`[data-gemist-slug="${cssEscape(slug)}"]`);
       if (!item) return;
-      const next = renderCard(product, showPrice, page);
+      const next = renderCard(product, cardOptions, page);
       item.replaceWith(next);
     };
 
@@ -175,7 +176,7 @@
       designerPage.replaceChildren();
     }
 
-    const cached = memory.byId[productId];
+    const cached = resolveCachedProduct(productId);
     if (cached) {
       detail.replaceChildren(renderDetail(root, cached));
     } else {
@@ -187,20 +188,27 @@
     }
 
     try {
-      let product = await loadProductById(apiBaseOf(root), productId);
-      product = await loadConfiguredProduct(apiBaseOf(root), product);
+      let product = await resolveProduct(productId);
+      try {
+        product = await loadConfiguredProduct(apiBaseOf(root), product);
+      } catch (error) {
+        console.warn("[gemist] configure skipped", error);
+      }
       if (queryParam(PRODUCT_PARAM) !== productId) return;
       if (queryParam(CUSTOMIZE_PARAM) === "1") {
         showDesigner(root, productId);
         return;
       }
       detail.replaceChildren(renderDetail(root, product));
-    } catch {
-      if (cached) return;
+    } catch (error) {
+      if (cached && isRenderableProduct(cached)) return;
       detail.replaceChildren();
       const failed = document.createElement("p");
       failed.className = "gemist-products__status";
-      failed.textContent = root.dataset.errorLabel || "Could not load products";
+      failed.textContent =
+        (error instanceof Error && error.message) ||
+        root.dataset.errorLabel ||
+        "Could not load products";
       detail.appendChild(failed);
       detail.appendChild(retryButton(root, () => showDetail(root, productId)));
     }
@@ -222,7 +230,7 @@
     }
     designerPage.hidden = false;
 
-    const cached = memory.byId[productId];
+    const cached = resolveCachedProduct(productId);
     if (cached) {
       designerPage.replaceChildren(renderDesignerPage(root, cached));
     } else {
@@ -234,18 +242,25 @@
     }
 
     try {
-      let product = await loadProductById(apiBaseOf(root), productId);
-      product = await loadConfiguredProduct(apiBaseOf(root), product);
+      let product = await resolveProduct(productId);
+      try {
+        product = await loadConfiguredProduct(apiBaseOf(root), product);
+      } catch (error) {
+        console.warn("[gemist] configure skipped", error);
+      }
       if (queryParam(PRODUCT_PARAM) !== productId || queryParam(CUSTOMIZE_PARAM) !== "1") {
         return;
       }
       designerPage.replaceChildren(renderDesignerPage(root, product));
-    } catch {
-      if (cached) return;
+    } catch (error) {
+      if (cached && isRenderableProduct(cached)) return;
       designerPage.replaceChildren();
       const failed = document.createElement("p");
       failed.className = "gemist-products__status";
-      failed.textContent = root.dataset.errorLabel || "Could not load products";
+      failed.textContent =
+        (error instanceof Error && error.message) ||
+        root.dataset.errorLabel ||
+        "Could not load products";
       designerPage.appendChild(failed);
       designerPage.appendChild(retryButton(root, () => showDesigner(root, productId)));
     }
@@ -327,7 +342,20 @@
           headers: { Accept: "application/json" },
         }),
       );
-      const product = payload.product || payload;
+      let product = asProduct(payload && payload.product);
+      if (
+        !product &&
+        Array.isArray(payload && payload.products)
+      ) {
+        product = asProduct(
+          payload.products.find((item) => item && item.id === productId),
+        );
+      }
+      if (!product) {
+        throw new Error(
+          (payload && payload.error) || "Could not load this product.",
+        );
+      }
       cacheProduct(product);
       return product;
     })().finally(() => memory.inflight.delete(key));
@@ -336,8 +364,52 @@
     return request;
   }
 
+  async function resolveProduct(productId) {
+    const cached = resolveCachedProduct(productId);
+    if (cached && isRenderableProduct(cached)) {
+      // Refresh in background; show cached immediately via caller.
+    }
+
+    try {
+      return await loadProductById(null, productId);
+    } catch (idError) {
+      const slug = queryParam(SLUG_PARAM) || (cached && cached.slug) || "";
+      if (!slug) throw idError;
+      const product = await loadStyleProduct(slug);
+      if (!isRenderableProduct(product)) throw idError;
+      return product;
+    }
+  }
+
+  function resolveCachedProduct(productId) {
+    const byId = memory.byId[productId];
+    if (isRenderableProduct(byId)) return byId;
+    const slug = queryParam(SLUG_PARAM);
+    if (slug && isRenderableProduct(memory.bySlug[slug])) {
+      return memory.bySlug[slug];
+    }
+    return null;
+  }
+
+  function asProduct(value) {
+    return isRenderableProduct(value) ? value : null;
+  }
+
+  function isRenderableProduct(product) {
+    return Boolean(
+      product &&
+        typeof product === "object" &&
+        (product.id || product.slug) &&
+        (product.title ||
+          product.shortTitle ||
+          product.style ||
+          product.slug ||
+          (product.images && product.images.length)),
+    );
+  }
+
   function cacheProduct(product, slug) {
-    if (!product) return;
+    if (!isRenderableProduct(product)) return;
     const compact = compactProduct(product);
     if (compact.id) memory.byId[compact.id] = compact;
     if (slug) memory.bySlug[slug] = compact;
@@ -386,7 +458,26 @@
     return item;
   }
 
-  function renderCard(product, showPrice, page) {
+  function cardOptionsOf(root) {
+    return {
+      showTitle: root.dataset.showTitle !== "false",
+      showDescription: root.dataset.showDescription !== "false",
+      showPrice: root.dataset.showPrice !== "false",
+      showActions: root.dataset.showActions !== "false",
+    };
+  }
+
+  function renderCard(product, options, page) {
+    const opts =
+      options && typeof options === "object" && !Array.isArray(options)
+        ? options
+        : {
+            showTitle: true,
+            showDescription: true,
+            showPrice: options !== false,
+            showActions: true,
+          };
+
     const item = document.createElement("li");
     if (product.slug) item.dataset.gemistSlug = product.slug;
 
@@ -395,7 +486,11 @@
 
     const link = document.createElement("a");
     link.className = "gemist-product-card__link";
-    link.href = catalogUrl({ productId: product.id, page });
+    link.href = catalogUrl({
+      productId: product.id,
+      slug: product.slug,
+      page,
+    });
     link.addEventListener(
       "pointerenter",
       () => {
@@ -422,20 +517,24 @@
     const body = document.createElement("div");
     body.className = "gemist-product-card__body";
 
-    const title = document.createElement("h3");
-    title.className = "gemist-product-card__title";
-    title.textContent = productTitle(product);
-    body.appendChild(title);
-
-    const subtitle = product.subtitle || product.description || product.style;
-    if (subtitle) {
-      const subtitleEl = document.createElement("p");
-      subtitleEl.className = "gemist-product-card__subtitle";
-      subtitleEl.textContent = subtitle;
-      body.appendChild(subtitleEl);
+    if (opts.showTitle) {
+      const title = document.createElement("h3");
+      title.className = "gemist-product-card__title";
+      title.textContent = productTitle(product);
+      body.appendChild(title);
     }
 
-    if (showPrice) {
+    if (opts.showDescription) {
+      const subtitle = product.subtitle || product.description || product.style;
+      if (subtitle) {
+        const subtitleEl = document.createElement("p");
+        subtitleEl.className = "gemist-product-card__subtitle";
+        subtitleEl.textContent = subtitle;
+        body.appendChild(subtitleEl);
+      }
+    }
+
+    if (opts.showPrice) {
       const price = formatPrice(product);
       if (price) {
         const priceEl = document.createElement("p");
@@ -448,17 +547,24 @@
     link.appendChild(body);
     card.appendChild(link);
 
-    const actions = document.createElement("div");
-    actions.className = "gemist-product-card__actions";
-    const view = document.createElement("a");
-    view.href = catalogUrl({ productId: product.id, page });
-    view.textContent = "View product";
-    const customize = document.createElement("a");
-    customize.href = catalogUrl({ productId: product.id, page, customize: true });
-    customize.textContent = "Customize";
-    actions.appendChild(view);
-    actions.appendChild(customize);
-    card.appendChild(actions);
+    if (opts.showActions) {
+      const actions = document.createElement("div");
+      actions.className = "gemist-product-card__actions";
+      const view = document.createElement("a");
+      view.href = catalogUrl({ productId: product.id, slug: product.slug, page });
+      view.textContent = "View product";
+      const customize = document.createElement("a");
+      customize.href = catalogUrl({
+        productId: product.id,
+        slug: product.slug,
+        page,
+        customize: true,
+      });
+      customize.textContent = "Customize";
+      actions.appendChild(view);
+      actions.appendChild(customize);
+      card.appendChild(actions);
+    }
 
     item.appendChild(card);
     return item;
@@ -602,6 +708,7 @@
     back.className = "gemist-detail__back";
     back.href = catalogUrl({
       productId: product.id,
+      slug: product.slug,
       page: queryParam(PAGE_PARAM),
     });
     back.textContent = root.dataset.backProductLabel || "Back to product";
@@ -660,9 +767,14 @@
     media.className = "gemist-detail__media";
     const stills = (product.images || []).map(mediaUrl).filter(Boolean);
     const spin = (product.images360 || []).map(mediaUrl).filter(Boolean);
-    const hero = document.createElement("img");
+    const imageSrc = stills[0] || productImage(product) || "";
+    const hero = document.createElement(imageSrc || spin.length ? "img" : "div");
     hero.className = "gemist-detail__hero";
-    hero.alt = productTitle(product);
+    if (hero.tagName === "IMG") {
+      hero.alt = productTitle(product);
+    } else {
+      hero.setAttribute("aria-label", productTitle(product));
+    }
 
     const frame = document.createElement("div");
     frame.className = "gemist-detail__hero-frame";
@@ -677,7 +789,7 @@
       hint.textContent = root.dataset.rotateLabel || "Drag to rotate";
       media.appendChild(hint);
     } else {
-      hero.src = stills[0] || productImage(product) || "";
+      if (hero.tagName === "IMG") hero.src = imageSrc;
       frame.appendChild(hero);
       media.appendChild(frame);
     }
@@ -760,6 +872,7 @@
     customize.className = "gemist-detail__secondary";
     customize.href = catalogUrl({
       productId: product.id,
+      slug: product.slug,
       page: queryParam(PAGE_PARAM),
       customize: true,
     });
@@ -848,6 +961,7 @@
         const next = await configureProduct(apiBaseOf(root), product, nextParts);
         const url = catalogUrl({
           productId: next.id,
+          slug: next.slug,
           page: queryParam(PAGE_PARAM),
           customize: true,
         });
@@ -998,9 +1112,11 @@
       limit: 1,
       offset: 0,
     });
-    const next = (payload.products && payload.products[0]) || product;
-    next.availableProductParts = payload.availableProductParts || {};
-    next.selectedProductParts = payload.selectedProductParts || parts;
+    const next = asProduct(payload.products && payload.products[0]) || product;
+    next.availableProductParts =
+      payload.availableProductParts || product.availableProductParts || {};
+    next.selectedProductParts =
+      payload.selectedProductParts || parts || product.selectedProductParts || {};
     cacheProduct(next, next.slug);
     return next;
   }
@@ -1012,7 +1128,7 @@
       limit: 1,
       offset: 0,
     });
-    const next = (payload.products && payload.products[0]) || null;
+    const next = asProduct(payload.products && payload.products[0]);
     if (!next) throw new Error("That combination is not available.");
     next.availableProductParts = payload.availableProductParts || {};
     next.selectedProductParts = payload.selectedProductParts || productParts;
@@ -1447,10 +1563,12 @@
     return new URLSearchParams(window.location.search).get(name);
   }
 
-  function catalogUrl({ productId, page, customize } = {}) {
+  function catalogUrl({ productId, page, customize, slug } = {}) {
     const url = new URL(window.location.href);
     if (productId) url.searchParams.set(PRODUCT_PARAM, productId);
     else url.searchParams.delete(PRODUCT_PARAM);
+    if (slug) url.searchParams.set(SLUG_PARAM, slug);
+    else if (!productId) url.searchParams.delete(SLUG_PARAM);
     if (page && Number(page) > 1) url.searchParams.set(PAGE_PARAM, String(page));
     else url.searchParams.delete(PAGE_PARAM);
     if (customize) url.searchParams.set(CUSTOMIZE_PARAM, "1");

@@ -144,14 +144,18 @@
 
   box-sizing: border-box;
   width: 100%;
+  padding: var(--gemist-section-padding, 0);
   color: var(--gemist-text);
 }
 
 .gemist-products__heading {
-  margin: 0 0 1.1rem;
+  margin: 0 0 var(--gemist-heading-margin, 1.1rem);
+  color: var(--gemist-heading-color, var(--gemist-text));
   font-size: var(--gemist-heading-size, clamp(1.35rem, 2.4vw, 1.85rem));
+  font-weight: var(--gemist-heading-weight, 600);
   letter-spacing: -0.03em;
   line-height: 1.2;
+  text-align: var(--gemist-heading-align, left);
 }
 
 .gemist-products__status {
@@ -174,13 +178,38 @@
   flex-direction: column;
   overflow: hidden;
   height: 100%;
+  width: 100%;
   max-width: var(--gemist-card-max-width, none);
+  margin-inline: auto;
   color: inherit;
   text-decoration: none;
-  background: var(--gemist-bg, var(--gemist-setting-bg, #ffffff));
-  border: 1px solid var(--gemist-border, color-mix(in srgb, var(--gemist-setting-text, #1a1a1a) 12%, transparent));
+  background: var(
+    --gemist-card-bg,
+    var(--gemist-bg, var(--gemist-setting-bg, #ffffff))
+  );
+  border: var(--gemist-card-border-width, 1px) solid
+    var(
+      --gemist-card-border-color,
+      var(
+        --gemist-border,
+        color-mix(in srgb, var(--gemist-setting-text, #1a1a1a) 12%, transparent)
+      )
+    );
   border-radius: var(--gemist-radius, var(--gemist-setting-radius, 16px));
+  box-shadow: none;
   transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.gemist-products[data-card-shadow="soft"] .gemist-product-card {
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 8%, transparent);
+}
+
+.gemist-products[data-card-shadow="medium"] .gemist-product-card {
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 12%, transparent);
+}
+
+.gemist-products[data-card-shadow="strong"] .gemist-product-card {
+  box-shadow: 0 16px 40px color-mix(in srgb, #000 18%, transparent);
 }
 
 .gemist-product-card__link {
@@ -234,8 +263,9 @@
   display: block;
   width: 100%;
   height: var(--gemist-image-size, auto);
-  aspect-ratio: 1;
-  object-fit: cover;
+  aspect-ratio: var(--gemist-image-ratio, 1);
+  object-fit: var(--gemist-image-fit, cover);
+  border-radius: var(--gemist-image-radius, 0);
   background: color-mix(in srgb, var(--gemist-setting-bg, #fff) 88%, var(--gemist-setting-accent, #1f6feb) 12%);
 }
 
@@ -249,22 +279,28 @@
 
 .gemist-product-card__title {
   margin: 0;
+  color: var(--gemist-title-color, var(--gemist-text, #1a1a1a));
   font-size: var(--gemist-title-size, 1rem);
+  font-weight: var(--gemist-title-weight, 600);
   line-height: 1.35;
 }
 
 .gemist-product-card__subtitle {
   margin: 0;
-  color: var(--gemist-muted, color-mix(in srgb, var(--gemist-setting-text, #1a1a1a) 62%, transparent));
+  color: var(
+    --gemist-body-color,
+    var(--gemist-muted, color-mix(in srgb, var(--gemist-setting-text, #1a1a1a) 62%, transparent))
+  );
   font-size: var(--gemist-body-size, 0.85rem);
+  font-weight: var(--gemist-body-weight, 400);
   line-height: 1.45;
 }
 
 .gemist-product-card__price {
   margin: 0.25rem 0 0;
-  color: var(--gemist-setting-accent, var(--gemist-accent, #1f6feb));
+  color: var(--gemist-price-color, var(--gemist-setting-accent, var(--gemist-accent, #1f6feb)));
   font-size: var(--gemist-price-size, 0.95rem);
-  font-weight: 650;
+  font-weight: var(--gemist-price-weight, 650);
 }
 
 .gemist-products__pager {

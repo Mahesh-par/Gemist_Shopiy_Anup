@@ -196,8 +196,10 @@ export default function SettingsPage() {
       <s-section heading="Catalog">
         <s-paragraph>
           Products load live from Gemist. They are not imported as a full
-          Shopify catalog.
+          Shopify catalog. Open Manage products to review this store’s Gemist
+          dataset and place the storefront grid.
         </s-paragraph>
+        <s-button href="/app/products">Manage products</s-button>
         <fetcher.Form method="post">
           <input type="hidden" name="intent" value="save-commerce" />
           <s-stack direction="block" gap="base">

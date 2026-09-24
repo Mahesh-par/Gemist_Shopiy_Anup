@@ -10,6 +10,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   await db.merchantCredential.deleteMany({ where: { shop } });
   await db.merchantSetting.deleteMany({ where: { shop } });
   await db.gemistOrderSubmission.deleteMany({ where: { shop } });
+  await db.merchantCatalogStyle.deleteMany({ where: { shop } });
 
   // Webhook requests can trigger multiple times and after an app has already been uninstalled.
   // If this webhook already ran, the session may have been deleted previously.

@@ -19,6 +19,7 @@ export default function App() {
     <AppProvider embedded apiKey={apiKey}>
       <s-app-nav>
         <s-link href="/app">Home</s-link>
+        <s-link href="/app/products">Products</s-link>
         <s-link href="/app/settings">Settings</s-link>
         <s-link href="/app/theme">Theme</s-link>
         <s-link href="/app/widgets">Widgets</s-link>
@@ -30,7 +31,9 @@ export default function App() {
 
 // Shopify needs React Router to catch some thrown responses, so that their headers are included in the response.
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  const error = useRouteError();
+  console.error("[gemist app] route error", error);
+  return boundary.error(error);
 }
 
 export const headers: HeadersFunction = (headersArgs) => {

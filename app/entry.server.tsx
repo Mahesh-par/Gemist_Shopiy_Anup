@@ -15,6 +15,8 @@ export default async function handleRequest(
   reactRouterContext: EntryContext
 ) {
   addDocumentResponseHeaders(request, responseHeaders);
+  // Embedded admin iframe: never allow a DENY frame header to win over Shopify CSP.
+  responseHeaders.delete("X-Frame-Options");
   const userAgent = request.headers.get("user-agent");
   const callbackName = isbot(userAgent ?? '')
     ? "onAllReady"

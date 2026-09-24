@@ -72,3 +72,19 @@ model GemistOrderSubmission {
   @@unique([shop, shopifyOrderId])
   @@index([shop, status])
 }
+
+/// Per-shop storefront visibility for a Gemist style (slug).
+/// Missing row = active (shown on storefront).
+model MerchantCatalogStyle {
+  id              String   @id @default(cuid())
+  shop            String
+  slug            String
+  status          String   @default("active") // active | archived | deleted
+  title           String   @default("")
+  gemistProductId String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([shop, slug])
+  @@index([shop, status])
+}
